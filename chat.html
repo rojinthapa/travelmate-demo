@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat with TravelMate</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <nav class="nav">
+                <div class="logo">TravelMate</div>
+                <div class="nav-links">
+                    <a href="index.html">Home</a>
+                    <a href="#" class="active">Chat</a>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <div class="chat-container">
+            <div class="chat-header">
+                <div class="bot-avatar">
+                    🤖
+                </div>
+                <div class="bot-info">
+                    <h2>TravelMate</h2>
+                    <p>Your AI Travel Companion</p>
+                </div>
+            </div>
+
+            <div class="quick-actions">
+                <button class="action-button">Restaurants</button>
+                <button class="action-button">Hotels</button>
+                <button class="action-button">Attractions</button>
+            </div>
+
+            <div class="chat-messages">
+                <div class="message bot-message">
+                    <div class="avatar">🤖</div>
+                    <div class="message-wrapper">
+                        <div class="content">
+                            Hello! I'm TravelMate, your AI travel companion. How can I help you today?
+                        </div>
+                        <div class="timestamp">22:04</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <input type="text" id="message-input" placeholder="Type your message...">
+                <div class="input-buttons">
+                    <button class="input-button mic" id="mic-button">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <button class="input-button" id="send-button">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/chat.js"></script>
+    <script src="js/voice.js"></script>
+    
+    <!-- Voice feedback element -->
+    <div id="voice-feedback" class="hidden">
+        Listening...
+    </div>
+    
+    <!-- Voice toggle -->
+    <div class="voice-toggle">
+        <input type="checkbox" id="voice-toggle-checkbox">
+        <label for="voice-toggle-checkbox">Enable voice responses</label>
+    </div>
+</body>
+</html> 
