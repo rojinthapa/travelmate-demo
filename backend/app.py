@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from nlp_processor import NLPProcessor
 from places_api import PlacesAPI
+from gemini_handler import GeminiHandler
 
 # Load environment variables
 load_dotenv()
@@ -19,6 +20,7 @@ CORS(app)
 # Initialize processors
 nlp_processor = NLPProcessor()
 places_api = PlacesAPI()
+gemini = GeminiHandler()  # Initialize Gemini
 
 # Serve HTML files
 @app.route('/')
@@ -72,34 +74,48 @@ def chat():
         user_message = data['message']
         logger.info(f"Received message: {user_message}")
 
-        # Process the message using NLP
-        intent, entities = nlp_processor.process_message(user_message)
-        logger.info(f"Processed intent: {intent}, entities: {entities}")
+        # Try Gemini first for intent detection
+        gemini_result = gemini.process_message(user_message)
+        
+        if gemini_result:
+            intent = gemini_result.get('intent', 'unknown')
+            entities = {
+                'place_type': gemini_result.get('place_type'),
+                'location': gemini_result.get('location')
+            }
+            friendly_response = gemini_result.get('friendly_response', '')
+            logger.info(f"Gemini intent: {intent}, entities: {entities}")
+        else:
+            # Fallback to spaCy NLP processor
+            intent, entities = nlp_processor.process_message(user_message)
+            friendly_response = None
+            logger.info(f"NLP intent: {intent}, entities: {entities}")
 
         # Generate response based on intent and entities
-        response = generate_response(intent, entities, user_message)
+        response = generate_response(intent, entities, user_message, friendly_response)
         logger.info(f"Generated response: {response}")
 
         return jsonify({
             'response': response,
             'intent': intent,
-            'entities': entities
+            'entities': entities,
+            'gemini_used': gemini_result is not None
         })
 
     except Exception as e:
         logger.error(f"Error processing message: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
-def generate_response(intent, entities, original_message):
+def generate_response(intent, entities, original_message, friendly_response=None):
     """
     Generate a response based on the intent and entities
     """
     try:
         if intent == 'greeting':
-            return "Hello! I'm your TravelMate assistant. How can I help you today? ✈️"
+            return friendly_response or "Hello! I'm your TravelMate assistant. How can I help you today? ✈️"
 
         elif intent == 'help':
-            return "I can help you find restaurants, hotels, and attractions. Just tell me what you're looking for and where! 🗺️"
+            return friendly_response or "I can help you find restaurants, hotels, and attractions. Just tell me what you're looking for and where! 🗺️"
 
         elif intent == 'find_places':
             if not entities.get('location'):
@@ -110,6 +126,50 @@ def generate_response(intent, entities, original_message):
             
             # Search for places
             places = places_api.search_places(location, place_type)
+            logger.info(f"Found {len(places)} places in {location}")
+            
+            if not places:
+                return f"I couldn't find any {place_type}s in {location}. Would you like to try a different location or type of place? 🌍"
+            
+            # Try Gemini for enhanced response
+            gemini_response = gemini.enhance_response(original_message, places)
+            
+            if gemini_response:
+                # Add the places list after Gemini's response
+                places_list = "\n\n📍 **Options:**\n"
+                for i, place in enumerate(places[:3], 1):
+                    places_list += f"{i}. **{place['name']}**"
+                    if place.get('rating') and place['rating'] != 'N/A':
+                        places_list += f" ⭐ {place['rating']}"
+                    places_list += f"\n   {place['address']}\n"
+                return gemini_response + places_list
+            
+            # Fallback to formatted response
+            response = f"Here are some {place_type}s in {location}:\n\n"
+            for i, place in enumerate(places[:5], 1):
+                response += f"{i}. {place['name']}\n"
+                if place.get('rating') and place['rating'] != 'N/A':
+                    response += f"   Rating: {place['rating']} ⭐\n"
+                if place.get('price') and place['price'] != 'N/A':
+                    response += f"   Price: {place['price']}\n"
+                response += f"   Address: {place['address']}\n"
+                if place.get('is_closed'):
+                    response += "   ⚠️ Currently closed\n"
+                response += "\n"
+            
+            response += "Would you like more details about any of these places? Just ask for the place number (1-5)."
+            return response
+
+        else:
+            return friendly_response or "I'm not sure I understand. Could you please rephrase that? I can help you find places or provide information about destinations. 🗺️"
+
+    except Exception as e:
+        logger.error(f"Error generating response: {str(e)}")
+        return "I apologize, but I encountered an error. Could you please try again?"
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)            places = places_api.search_places(location, place_type)
             logger.info(f"Found {len(places)} places in {location}")
             
             if not places:
