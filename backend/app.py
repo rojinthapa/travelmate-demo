@@ -1,203 +1,138 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-import logging
 import os
+import requests
+import json
 from dotenv import load_dotenv
-from nlp_processor import NLPProcessor
-from places_api import PlacesAPI
-from gemini_handler import GeminiHandler
 
-# Load environment variables
 load_dotenv()
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__, static_folder='.')
+app = Flask(__name__)
 CORS(app)
 
-# Initialize processors
-nlp_processor = NLPProcessor()
-places_api = PlacesAPI()
-gemini = GeminiHandler()  # Initialize Gemini
+GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY')
 
-# Serve HTML files
-@app.route('/')
-def index():
-    return send_from_directory('.', 'index.html')
-
-@app.route('/chat.html')
-def chat_page():
-    return send_from_directory('.', 'chat.html')
-
-# Serve static files
-@app.route('/css/<path:path>')
-def serve_css(path):
-    return send_from_directory('css', path)
-
-@app.route('/js/<path:path>')
-def serve_js(path):
-    return send_from_directory('js', path)
-
-@app.route('/images/<path:path>')
-def serve_images(path):
-    return send_from_directory('images', path)
-
-@app.route('/api/set_location', methods=['POST'])
-def set_location():
+def search_places(location, place_type):
+    """Search for places using Google Places API"""
+    if not GOOGLE_MAPS_API_KEY:
+        # Return mock data if no API key
+        return get_mock_places(location, place_type)
+    
     try:
-        data = request.get_json()
-        if not data or 'location' not in data:
-            return jsonify({'error': 'No location provided'}), 400
-
-        location = data['location']
-        nlp_processor.set_current_location(location)
-        logger.info(f"User location set to: {location}")
+        # Geocode location to get coordinates
+        geo_url = "https://maps.googleapis.com/maps/api/geocode/json"
+        geo_params = {'address': location, 'key': GOOGLE_MAPS_API_KEY}
+        geo_response = requests.get(geo_url, params=geo_params)
+        geo_data = geo_response.json()
         
-        return jsonify({
-            'message': f'Location set to {location}',
-            'location': location
-        })
-
+        if not geo_data.get('results'):
+            return get_mock_places(location, place_type)
+        
+        coords = geo_data['results'][0]['geometry']['location']
+        
+        # Search for places
+        type_map = {'restaurant': 'restaurant', 'hotel': 'lodging', 'attraction': 'tourist_attraction'}
+        places_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+        places_params = {
+            'location': f"{coords['lat']},{coords['lng']}",
+            'radius': 5000,
+            'type': type_map.get(place_type, 'restaurant'),
+            'key': GOOGLE_MAPS_API_KEY
+        }
+        
+        places_response = requests.get(places_url, params=places_params)
+        places_data = places_response.json()
+        
+        results = []
+        for place in places_data.get('results', [])[:5]:
+            results.append({
+                'name': place.get('name'),
+                'rating': place.get('rating', 'N/A'),
+                'address': place.get('vicinity', 'Address not available'),
+                'price': '$' * place.get('price_level', 0) if place.get('price_level') else 'N/A'
+            })
+        
+        return results if results else get_mock_places(location, place_type)
+        
     except Exception as e:
-        logger.error(f"Error setting location: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+        print(f"Error: {e}")
+        return get_mock_places(location, place_type)
+
+def get_mock_places(location, place_type):
+    """Return mock data for testing"""
+    mock_data = {
+        'restaurant': [
+            {'name': f'Le Petit Cafe {location}', 'rating': 4.5, 'address': f'123 Main St, {location}', 'price': '$$'},
+            {'name': f'Pizza Heaven {location}', 'rating': 4.2, 'address': f'456 Oak Ave, {location}', 'price': '$'},
+            {'name': f'Sushi Master {location}', 'rating': 4.8, 'address': f'789 Pine Rd, {location}', 'price': '$$$'}
+        ],
+        'hotel': [
+            {'name': f'Grand {location} Hotel', 'rating': 4.7, 'address': f'1 Hotel Blvd, {location}', 'price': '$$$'},
+            {'name': f'Budget Inn {location}', 'rating': 3.9, 'address': f'100 Economy Ln, {location}', 'price': '$'}
+        ],
+        'attraction': [
+            {'name': f'{location} Museum', 'rating': 4.6, 'address': f'200 Culture St, {location}', 'price': '$$'},
+            {'name': f'{location} Park', 'rating': 4.4, 'address': f'300 Nature Dr, {location}', 'price': 'Free'}
+        ]
+    }
+    return mock_data.get(place_type, mock_data['restaurant'])
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
     try:
         data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({'error': 'No message provided'}), 400
-
-        user_message = data['message']
-        logger.info(f"Received message: {user_message}")
-
-        # Try Gemini first for intent detection
-        gemini_result = gemini.process_message(user_message)
+        message = data.get('message', '').lower()
         
-        if gemini_result:
-            intent = gemini_result.get('intent', 'unknown')
-            entities = {
-                'place_type': gemini_result.get('place_type'),
-                'location': gemini_result.get('location')
-            }
-            friendly_response = gemini_result.get('friendly_response', '')
-            logger.info(f"Gemini intent: {intent}, entities: {entities}")
-        else:
-            # Fallback to spaCy NLP processor
-            intent, entities = nlp_processor.process_message(user_message)
-            friendly_response = None
-            logger.info(f"NLP intent: {intent}, entities: {entities}")
-
-        # Generate response based on intent and entities
-        response = generate_response(intent, entities, user_message, friendly_response)
-        logger.info(f"Generated response: {response}")
-
-        return jsonify({
-            'response': response,
-            'intent': intent,
-            'entities': entities,
-            'gemini_used': gemini_result is not None
-        })
-
-    except Exception as e:
-        logger.error(f"Error processing message: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-def generate_response(intent, entities, original_message, friendly_response=None):
-    """
-    Generate a response based on the intent and entities
-    """
-    try:
-        if intent == 'greeting':
-            return friendly_response or "Hello! I'm your TravelMate assistant. How can I help you today? ✈️"
-
-        elif intent == 'help':
-            return friendly_response or "I can help you find restaurants, hotels, and attractions. Just tell me what you're looking for and where! 🗺️"
-
-        elif intent == 'find_places':
-            if not entities.get('location'):
-                return "Could you please specify a location? For example, 'Find restaurants in Paris'"
+        # Simple intent detection
+        if any(word in message for word in ['hi', 'hello', 'hey']):
+            return jsonify({'response': 'Hello! 👋 I\'m TravelMate. Ask me to find restaurants, hotels, or attractions anywhere in the world! 🌍'})
+        
+        elif any(word in message for word in ['find', 'search', 'where', 'show']):
+            # Detect place type
+            place_type = 'restaurant'
+            if 'hotel' in message or 'stay' in message:
+                place_type = 'hotel'
+            elif 'attraction' in message or 'tourist' in message or 'sight' in message:
+                place_type = 'attraction'
             
-            location = entities['location']
-            place_type = entities.get('place_type', 'restaurant')
+            # Extract location
+            location = None
+            cities = ['paris', 'london', 'tokyo', 'new york', 'bali', 'sydney', 'rome', 'dubai', 'bangkok']
+            for city in cities:
+                if city in message:
+                    location = city.title()
+                    break
+            
+            if not location and 'near me' not in message:
+                return jsonify({'response': f'📍 Which city would you like to find {place_type}s in? (e.g., Paris, London, Tokyo)'})
+            
+            if not location:
+                location = "your area"
             
             # Search for places
-            places = places_api.search_places(location, place_type)
-            logger.info(f"Found {len(places)} places in {location}")
+            places = search_places(location, place_type)
             
-            if not places:
-                return f"I couldn't find any {place_type}s in {location}. Would you like to try a different location or type of place? 🌍"
+            if places:
+                response = f"✨ Found {len(places)} great {place_type}s in {location}! ✨\n\n"
+                for i, place in enumerate(places, 1):
+                    response += f"{i}. **{place['name']}**\n"
+                    response += f"   ⭐ Rating: {place['rating']} | 💰 {place['price']}\n"
+                    response += f"   📍 {place['address']}\n\n"
+                response += "Would you like more details about any of these? Just ask! 🎯"
+            else:
+                response = f"😅 I couldn't find any {place_type}s in {location}. Try a different city or type of place!"
             
-            # Try Gemini for enhanced response
-            gemini_response = gemini.enhance_response(original_message, places)
-            
-            if gemini_response:
-                # Add the places list after Gemini's response
-                places_list = "\n\n📍 **Options:**\n"
-                for i, place in enumerate(places[:3], 1):
-                    places_list += f"{i}. **{place['name']}**"
-                    if place.get('rating') and place['rating'] != 'N/A':
-                        places_list += f" ⭐ {place['rating']}"
-                    places_list += f"\n   {place['address']}\n"
-                return gemini_response + places_list
-            
-            # Fallback to formatted response
-            response = f"Here are some {place_type}s in {location}:\n\n"
-            for i, place in enumerate(places[:5], 1):
-                response += f"{i}. {place['name']}\n"
-                if place.get('rating') and place['rating'] != 'N/A':
-                    response += f"   Rating: {place['rating']} ⭐\n"
-                if place.get('price') and place['price'] != 'N/A':
-                    response += f"   Price: {place['price']}\n"
-                response += f"   Address: {place['address']}\n"
-                if place.get('is_closed'):
-                    response += "   ⚠️ Currently closed\n"
-                response += "\n"
-            
-            response += "Would you like more details about any of these places? Just ask for the place number (1-5)."
-            return response
-
+            return jsonify({'response': response})
+        
+        elif any(word in message for word in ['help', 'what can you do']):
+            return jsonify({'response': '💡 I can help you:\n• Find restaurants 🍕\n• Book hotels 🏨\n• Discover attractions 🎯\n• Get travel tips ✈️\n\nJust tell me what you\'re looking for and where!'})
+        
         else:
-            return friendly_response or "I'm not sure I understand. Could you please rephrase that? I can help you find places or provide information about destinations. 🗺️"
-
+            return jsonify({'response': '🌟 I\'m here to help you travel better! Try asking:\n\n• "Find restaurants in Paris"\n• "Show me hotels in Tokyo"\n• "Find attractions near me"\n\nWhat would you like to explore? 🗺️'})
+            
     except Exception as e:
-        logger.error(f"Error generating response: {str(e)}")
-        return "I apologize, but I encountered an error. Could you please try again?"
+        print(f"Error: {e}")
+        return jsonify({'response': 'Sorry, something went wrong. Please try again! 🌍'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)            places = places_api.search_places(location, place_type)
-            logger.info(f"Found {len(places)} places in {location}")
-            
-            if not places:
-                return f"I couldn't find any {place_type}s in {location}. Would you like to try a different location or type of place? 🌍"
-            
-            # Format the response
-            response = f"Here are some {place_type}s in {location}:\n\n"
-            for i, place in enumerate(places[:5], 1):
-                response += f"{i}. {place['name']}\n"
-                if place.get('rating') and place['rating'] != 'N/A':
-                    response += f"   Rating: {place['rating']} ⭐\n"
-                if place.get('price') and place['price'] != 'N/A':
-                    response += f"   Price: {place['price']}\n"
-                response += f"   Address: {place['address']}\n"
-                if place.get('is_closed'):
-                    response += "   ⚠️ Currently closed\n"
-                response += "\n"
-            
-            response += "Would you like more details about any of these places? Just ask for the place number (1-5)."
-            return response
-
-        else:
-            return "I'm not sure I understand. Could you please rephrase that? I can help you find places or provide information about destinations. 🗺️"
-
-    except Exception as e:
-        logger.error(f"Error generating response: {str(e)}")
-        return "I apologize, but I encountered an error. Could you please try again?"
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=True)
