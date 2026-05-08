@@ -20,8 +20,7 @@ load_dotenv(dotenv_path=env_path)
 
 class PlacesAPI:
     def __init__(self, api_key: Optional[str] = None):
-        # self.api_key = os.getenv('GOOGLE_MAPS_API_KEY')
-        self.api_key = "AIzaSyCDCnLGFUP9tONtVQl1KfXzAxW0AJLbDps";
+        self.api_key = api_key or os.getenv('GOOGLE_MAPS_API_KEY')
         if not self.api_key:
             raise ValueError("Google Maps API key is required")
         print("API Key:", self.api_key)
