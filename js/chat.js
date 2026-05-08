@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const micButton = document.getElementById('mic-button');
     const actionButtons = document.querySelectorAll('.action-button');
     
+    // Get API URL dynamically (works on both localhost and Render)
+    const API_URL = window.location.origin + '/api/chat';
+    
     // Clear any existing messages
     chatMessages.innerHTML = '';
     
@@ -45,39 +48,27 @@ document.addEventListener('DOMContentLoaded', function() {
                 case 'Attractions':
                     message = "Find me attractions";
                     break;
-                case 'Safety Tips':
-                    message = "Tell me about safety tips";
-                    break;
-                case 'Photo Spots':
-                    message = "Find me photo spots";
-                    break;
-                case 'Transportation':
-                    message = "Tell me about transportation";
-                    break;
             }
             
             if (message) {
                 messageInput.value = message;
-                messageInput.focus();
+                sendMessage();
             }
         });
     });
 
-    // Store user location when available
+    // Store user location
     let userCity = "your current location";
     
     // Try to get user location on page load
     getUserLocation();
 
     function getUserLocation() {
-        // Check if geolocation is supported
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 function(position) {
-                    // Log coordinates for debugging
                     console.log("Location obtained:", position.coords.latitude, position.coords.longitude);
                     
-                    // Use a simple IP-based service instead of reverse geocoding
                     fetch('https://ipapi.co/json/')
                         .then(response => {
                             if (!response.ok) {
@@ -86,7 +77,6 @@ document.addEventListener('DOMContentLoaded', function() {
                             return response.json();
                         })
                         .then(data => {
-                            // Store the city name
                             userCity = data.city || "your current location";
                             console.log("City detected:", userCity);
                         })
@@ -107,17 +97,15 @@ document.addEventListener('DOMContentLoaded', function() {
     async function sendMessage() {
         let message = messageInput.value.trim();
         if (message) {
-            // Display the message as typed by the user
             displayMessage(message, 'user');
             
-            // Check if the message contains location patterns
+            // Handle "near me" queries
             if (/\b(nearby|near me)\b/gi.test(message)) {
-                // Replace patterns in the message with the stored city
                 message = message.replace(/\b(nearby|near me)\b/gi, `in ${userCity}`);
                 console.log("Message with location replaced:", message);
             }
             
-            handleResponse(message);
+            await handleResponse(message);
             messageInput.value = '';
         }
     }
@@ -132,7 +120,7 @@ document.addEventListener('DOMContentLoaded', function() {
             chatMessages.scrollTop = chatMessages.scrollHeight;
 
             // Make API call to backend
-            const response = await fetch('http://127.0.0.1:5000/api/chat', {
+            const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -155,12 +143,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         } catch (error) {
             console.error('Error:', error);
-            // Remove typing indicator if it exists
             const typingIndicator = document.querySelector('.typing');
             if (typingIndicator) {
                 typingIndicator.remove();
             }
-            // Display error message to user
             displayMessage("I apologize, but I'm having trouble connecting to the server. Please try again in a moment.", 'bot');
         }
     }
